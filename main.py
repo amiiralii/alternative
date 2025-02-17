@@ -48,12 +48,24 @@ def knn(labeled, row, k, info):
     distances = []
     for l in labeled:
         distances.append([l, dist1(l,row, info)])
-    return sorted(distances, key = lambda d:d[1])[:k]
+    s = sorted(distances, key = lambda d:d[1])[:k]
+    return [r[0] for r in s], [r[1] for r in s]
 
 
-def weighted_avg(nn_rows,row,info):
-    ## TODO
-    pass
+def weighted_avg(tst, cluster, weights, info, target):
+    print(tst)
+    print(cluster)
+    print(info['head'])
+    print(target)
+    input()
+    v = 0
+    for i in range(len(info['head'])):
+        if info['head'][i][0].isupper():
+            pass
+
+    print(len(cluster.iloc[0]), len(weights), len(info['scores']))
+    input()
+    return 
 
 
 def cross_val(dataset, repeat=5, folds=5):
@@ -66,6 +78,7 @@ def cross_val(dataset, repeat=5, folds=5):
 
 df = pd.read_csv(sys.argv[1])
 df = df.drop(columns=[c for c in df.columns if c[-1] in ["X"]])
+
 mln=0
 for train,test in cross_val(df):    ## 5-Fold Cross Validation with 5 repeats
     print(mln)
@@ -103,12 +116,12 @@ for train,test in cross_val(df):    ## 5-Fold Cross Validation with 5 repeats
     ###########
     ## Stage 2 : Case Selection (Active Leaarning)
     ###########
-        unlabeled = train[final_features+[t]].values.tolist()
+        unlabeled = train[final_features+[t]].values.tolist() ## Storing training data in a list format including all usefull features and current target
         info = {}
         info['head'] = list(train[final_features].columns)
         info['min'] = list(train[final_features].min())
         info['max'] = list(train[final_features].max())
-        info['scors'] = feature_score
+        info['scores'] = feature_score
         random.shuffle(unlabeled)
         labeled = [unlabeled.pop() for _ in range(4)]
         budget = math.sqrt(len(unlabeled))
@@ -119,13 +132,22 @@ for train,test in cross_val(df):    ## 5-Fold Cross Validation with 5 repeats
     ###########
     ## Stage 3 : Select Analogy
     ###########
-        cluster = [random.choice(labeled) for _ in range(12)]   ## Random Cluster
-        cluster = labeled                                       ## No Analogy
-        cluster = knn(labeled, random.choice(labeled), 5, info) ## KNN
-
+        
+        preds = []
+        for _,tst in test.iterrows(): 
+            #pred_rows = [random.choice(labeled) for _ in range(12)]        ## Random
+            #pred_rows = labeled                                            ## No Analogy
+            pred_rows, weights = knn(labeled, tst.values.tolist(), 5, info) ## KNN
     ###########
     ## Stage 4 : Make Prediction
     ###########
+            cluster = pd.DataFrame(pred_rows, columns=[info['head']+[t]])
+            #preds.append(float(cluster[t].mean().iloc[0]))             ## Predicting using mean of cluster
+            preds.append( weighted_avg(tst, cluster, weights, info, t) )    ## Predicting using weighted average of cluster
+        test[f'{t}Preds'] = preds
+        print(test)
+        input()
+
+
         
-        
-#   print(weighted_avg(k,row,info))
+#           print(weighted_avg(k,row,info))
