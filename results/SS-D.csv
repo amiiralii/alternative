@@ -1,0 +1,24 @@
+
+Throughput+:
+#
+ 0,        Throughput+lgbm-fs, 17.06,  5.04, -*--                |                   
+#
+ 1,            Throughput+knn, 60.08, 23.57,        ----  *    --|-------------      
+#
+ 2,           Throughput+lgbm, 65.88, 53.03,  ---           *   -|--                 
+ 2,      Throughput+linear-fs, 66.35,  9.23,           ---- * ---|                   
+#
+ 3,         Throughput+knn-fs, 72.52, 27.37,            ---   *  |----               
+ 3,         Throughput+linear, 73.42, 16.08,           -----  *  |---                
+
+Latency-:
+#
+ 0,           Latency-lgbm-fs, 7289.74, 2943.95,  *                  |                   
+ 0,              Latency-lgbm, 7401.20, 4666.77,  *----              |                   
+#
+ 1,               Latency-knn, 12525.94, 24626.16, -*  --------------  |                   
+ 1,            Latency-knn-fs, 14514.72, 22070.85,  *  ---             |                   
+#
+ 2,            Latency-linear, 27487.27, 12529.30,   -* --             |                   
+#
+ 3,         Latency-linear-fs, 50733.97, 18409.18,      -* --          |                   

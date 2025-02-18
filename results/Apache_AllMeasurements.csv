@@ -1,0 +1,13 @@
+
+Performance-:
+#
+ 0,       Performance-lgbm-fs,  3.81,  0.68, *                   |                   
+#
+ 1,          Performance-lgbm,  4.85,  1.35, -*                  |                   
+#
+ 2,     Performance-linear-fs, 14.97,  2.02,          *-         |                   
+#
+ 3,        Performance-linear, 15.16,  2.09,          *-         |                   
+ 3,        Performance-knn-fs, 16.93,  8.02,    --     *---      |                   
+#
+ 4,           Performance-knn, 33.25, 28.01,    --               |  *  --------      

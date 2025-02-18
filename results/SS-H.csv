@@ -1,0 +1,24 @@
+
+Energy-:
+#
+ 0,               Energy-lgbm,  0.31,  0.03, *                   |                   
+ 0,            Energy-lgbm-fs,  0.31,  0.04, *                   |                   
+#
+ 1,             Energy-linear,  3.42,  0.43,     -*              |                   
+#
+ 2,          Energy-linear-fs,  3.43,  0.45,     -*              |                   
+#
+ 3,             Energy-knn-fs,  6.22,  0.52,          -*-        |                   
+#
+ 4,                Energy-knn, 13.73,  2.82,                     |- *   -            
+
+Inv_runtime-:
+#
+ 0,       Inv_runtime-lgbm-fs,  0.28,  0.16,  *                  |                   
+ 0,          Inv_runtime-lgbm,  0.28,  0.17,  *                  |                   
+#
+ 1,     Inv_runtime-linear-fs,  1.95,  0.26,               - * --|                   
+ 1,        Inv_runtime-linear,  1.96,  0.22,                 *---|                   
+#
+ 2,           Inv_runtime-knn,  2.24,  0.47,               ---  *| ------            
+ 2,        Inv_runtime-knn-fs,  2.27,  0.58,               --   *| ----              
