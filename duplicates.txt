@@ -1,0 +1,8 @@
+SQL_AllMeasurements.csv: 521
+SS-L.csv: 255
+SS-N.csv: 1412
+SS-P.csv: 255
+auto93.csv: 92
+real_estate_valuation.csv: 20
+Wine_quality.csv: 244
+nasa93dem.csv: 38
