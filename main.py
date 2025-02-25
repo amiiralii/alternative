@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import sys
 import math
+from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import KBinsDiscretizer
 from sklearn.feature_selection import mutual_info_regression
 from ITMO_FS.filters.univariate import reliefF_measure
@@ -99,12 +100,10 @@ def cross_val(dataset, repeat=5, folds=5):
         for train_index, test_index in kf.split(dataset):
             yield dataset.iloc[train_index].reset_index(drop=True), dataset.iloc[test_index].reset_index(drop=True)        
 
-
 def experiment(dataset, settings, rpt=5):
     df = pd.read_csv(dataset)
     df = df.drop(columns=[c for c in df.columns if c[-1] in ["X"]])
     df.drop_duplicates(inplace=True)
-
     ## Set the experiment settings
     # Values for FS: 00(No feature selection), 
     #                11(info. gain with uniform discr.), 12(info. gain with quantile discr.), 13(info. gain with kmeans discr.)
@@ -121,9 +120,11 @@ def experiment(dataset, settings, rpt=5):
         ###########
 
         ### Discretization
+        le = LabelEncoder()
         if sum(1 for col in train.columns if col[0].isupper()) == 0: settings["FS"][1] = 0
         if settings["FS"][1] == "0":
             x_train  = train.drop(columns=targets)
+            
         else:
             if settings["FS"][1] == "1": discretizer = KBinsDiscretizer(encode='ordinal', strategy='uniform')  ## Equal Width
             if settings["FS"][1] == "2": discretizer = KBinsDiscretizer(encode='ordinal', strategy='quantile') ## Equal Frequency
@@ -136,6 +137,10 @@ def experiment(dataset, settings, rpt=5):
             x_train = pd.concat([x_train, pd.DataFrame(discretizer.fit_transform(train[num]), columns=num)],axis=1)
             x_train= x_train.drop(columns=targets)
         
+        for c in x_train.columns:
+                if not c[0].isupper():
+                    x_train[c] = le.fit_transform(x_train[c])
+                    
         ### Feature Selection
         target_results = []
         for t in targets:
@@ -207,7 +212,6 @@ def experiment(dataset, settings, rpt=5):
     ##          mape evals
     ## stats report
 
-
 def run_baseline(dataset, model):
     df = pd.read_csv(dataset)
     df = df.drop(columns=[c for c in df.columns if c[-1] in ["X"]])
@@ -215,7 +219,10 @@ def run_baseline(dataset, model):
 
     targets = [c for c in df.columns if c[-1] in ["-","+"]]
     features = [c for c in df.columns if c[-1] not in ["-","+"]]
-
+    le = LabelEncoder()
+    for c in df.columns:
+                if not c[0].isupper():
+                    df[c] = le.fit_transform(df[c])
     res = []
     ## Baselines and SOTA
     for train,test in cross_val(df):
@@ -236,7 +243,6 @@ def optimization(space):
 
 
 if __name__ == '__main__':
-
     space = {
         'feature_selection': hp.choice('FS', ["00", "11", "12", "13", "20"]),
         'case_selection': hp.choice('CS', ['0', '1', '2']),
