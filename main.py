@@ -12,6 +12,7 @@ import regressors
 import random
 from hyperopt import hp, fmin, tpe, Trials
 import stats
+import time
 
 
 # Gets x, max and min of the col and returns the normalized value
@@ -69,9 +70,13 @@ def diversity_sampling(labeled, unlabeled, info):
 ## Find K-Nearest Neighbors
 def knn(labeled, row, k, info, weight = False):
     distances = []
+    t1 = time.time()
     for l in labeled:
         distances.append([l, dist1(l,row, info, weight)])
+    t2 = time.time()
     s = sorted(distances, key = lambda d:d[1])[:k]
+    #s = distances
+    print("sorting cost:",round(time.time() - t2,5), "iter cost:",round(t2 - t1,5), len(distances))
     
     return [r[0] for r in s]
 
@@ -157,7 +162,7 @@ def experiment(dataset, settings, rpt=5):
             mean_score, std_dev = np.mean(feature_score), np.std(feature_score)
             threshold = mean_score - 0.7 * std_dev
             final_features = [features[i] for i, score in enumerate(feature_score) if score >= threshold]
-        
+            print("FS Done!")
         ###########
         ## Stage 2 : Case Selection (Active Leaarning)
         ###########
@@ -175,7 +180,7 @@ def experiment(dataset, settings, rpt=5):
                 while (len(labeled) < budget):
                     if settings["CS"] == "1":   labeled += [unlabeled.pop(random.randint(0, len(unlabeled)-1))]             ## Random Sampling
                     if settings["CS"] == "2":   labeled += [unlabeled.pop(diversity_sampling(labeled, unlabeled, info))]   ## Diversity Sampling
-                    
+            print("CS Done!")      
         ###########
         ## Stage 3 : Select Analogy
         ###########
@@ -184,7 +189,6 @@ def experiment(dataset, settings, rpt=5):
                 if settings["AS"] == "0":   pred_rows = labeled                                            ## No Analogy
                 if settings["AS"] == "1":   pred_rows = [random.choice(labeled) for _ in range(12)]        ## Random
                 if settings["AS"] == "2":   pred_rows = knn(labeled, tst[final_features+[t]].values.tolist(), 5, info)         ## KNN
-        
         ###########
         ## Stage 4 : Make Prediction
         ###########
@@ -193,6 +197,7 @@ def experiment(dataset, settings, rpt=5):
         ###########
         ## Stage 5 : Evaluation
         ###########
+            print("Pred All Done!")
             target_results.append(mape(test[t].to_numpy(),np.array(preds)))
 
         results.append(target_results)
@@ -238,7 +243,7 @@ def optimization(space):
                 "CS":   space['case_selection'], 
                 "AS":   space['analogy_selection'], 
                 "Dist": space['distance_function']}
-    
+    print(settings)
     return experiment(sys.argv[1], settings, 1)
 
 
@@ -250,11 +255,11 @@ if __name__ == '__main__':
         'distance_function': hp.choice('Dist', ['0', '1'])
     }
     best = fmin(
-        fn=optimization,          # Objective function
-        space=space,              # Search space
+        fn=optimization,
+        space=space,
         algo=tpe.suggest,         # Tree-structured Parzen Estimator (TPE)
-        max_evals=50,             # Number of trials
-        trials=Trials(),           # Store results
+        max_evals=50,
+        trials=Trials(),
         show_progressbar=False
     )
 
