@@ -5,6 +5,7 @@ import math
 from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import KBinsDiscretizer
 from sklearn.feature_selection import mutual_info_regression
+from sklearn.preprocessing import StandardScaler
 from ITMO_FS.filters.univariate import reliefF_measure
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import KFold
@@ -194,6 +195,7 @@ def diversity_sampling(labeled, unlabeled, info, d_func):
         dist_picks[idx] = np.min(dists)
     return max(dist_picks, key=lambda x: dist_picks[x])
 
+## Based on NB probability rules
 def least_confidence(labeled, unlabeled, info):
     """
     Active learning acquisition function using a vectorized Naive Bayes–style model.
@@ -361,7 +363,7 @@ def weighted_avg(cluster, target_row, info, d_func):
 
 ## MAPE metric for accuracy
 def mape(true, pred):
-    return np.mean(np.abs((true - pred) / (true + 1E-32))) * 100
+    return np.mean(np.abs((true - pred) / ((abs(true)+abs(pred))/2 + 1e-32) )) * 100
 
 ## Cross Validation since our methods are not deterministic
 def cross_val(dataset, repeat=5, folds=5):
@@ -376,6 +378,9 @@ def experiment(dataset, settings, rpt=5):
     df = pd.read_csv(dataset)
     df = df.drop(columns=[c for c in df.columns if c[-1] in ["X"]])
     df.drop_duplicates(inplace=True)
+    le = LabelEncoder()
+    for c in df.columns:
+                if not c[0].isupper(): df[c] = le.fit_transform(df[c])
     ## Set the experiment settings
     # Values for FS: 00(No feature selection), 
     #                11(info. gain with uniform discr.), 12(info. gain with quantile discr.), 13(info. gain with kmeans discr.)
@@ -391,13 +396,10 @@ def experiment(dataset, settings, rpt=5):
         ###########
         ## Stage 1 : Feature Selection (May contain discretization methods)
         ###########
-
         ### Discretization
-        le = LabelEncoder()
         if sum(1 for col in train.columns if col[0].isupper()) == 0: settings["FS"][1] = 0
         if settings["FS"][1] == "0":
             x_train  = train.drop(columns=targets)
-            
         else:
             if settings["FS"][1] == "1": discretizer = KBinsDiscretizer(encode='ordinal', strategy='uniform')  ## Equal Width
             if settings["FS"][1] == "2": discretizer = KBinsDiscretizer(encode='ordinal', strategy='quantile') ## Equal Frequency
@@ -405,15 +407,11 @@ def experiment(dataset, settings, rpt=5):
             num = []
             x_train = pd.DataFrame()
             for c in train.columns: 
-                if c[0].isupper() and train[c].nunique() > 10: num += [c]
+                if c[0].isupper() and train[c].nunique() > 10:  num += [c]
                 else: x_train.loc[:, c] = train.loc[:, c]
             x_train = pd.concat([x_train, pd.DataFrame(discretizer.fit_transform(train[num]), columns=num)],axis=1)
             x_train= x_train.drop(columns=targets)
         
-        for c in x_train.columns:
-                if not c[0].isupper():
-                    x_train[c] = le.fit_transform(x_train[c])
-                    
         ### Feature Selection
         target_results = []
         for t in targets:
@@ -435,6 +433,7 @@ def experiment(dataset, settings, rpt=5):
         ## Stage 2 : Case Selection (Active Leaarning)
         ###########
             unlabeled = train[final_features+[t]].values.tolist() ## Storing training data in a list format including all usefull features and current target
+            
             info = {}
             info['head'] = list(train[final_features].columns)
             info['min'] = list(train[final_features].min())
@@ -563,7 +562,7 @@ def find_best_setting(method):
 
 ## Translate and keeps the HPOed setting
 def save_best_setting(setting, data):
-    print(setting,data.split('/')[-2]+'/'+data.split('/')[-1])
+    #print(setting,data.split('/')[-2]+'/'+data.split('/')[-1])
     setting['target'] = data.split('/')[-2]+'/'+data.split('/')[-1]
     with open('best_settings.csv', 'a') as file:
         f = DictWriter(file, fieldnames=setting.keys())
