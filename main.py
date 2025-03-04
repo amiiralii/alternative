@@ -6,6 +6,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.preprocessing import KBinsDiscretizer
 from sklearn.feature_selection import mutual_info_regression
 from ITMO_FS.filters.univariate import reliefF_measure
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import KFold
 from sklearn.utils import shuffle
 import regressors
@@ -50,7 +51,6 @@ def dist1(r1, r2, info, weight=False):
         weights = np.ones(n_features, dtype=float)
     # Create a mask of numeric columns (based on column name: starts with uppercase)
     numeric_mask = np.array([col[0].isupper() for col in info['head']])
-
     # Extract only the feature part of the rows
     if r1.ndim == 1:
         r1_feat = r1[:n_features]
@@ -110,6 +110,7 @@ def dist2_old(r1, r2, info, weight = False):
             dst += weights[i] * (r1[i]!=r2[i])
     return dst / sum(weights)
 
+## Vectorized version
 def dist2(r1, r2, info, weight=False):
     """
     Manhattan Distance (vectorized).
@@ -193,6 +194,155 @@ def diversity_sampling(labeled, unlabeled, info, d_func):
         dist_picks[idx] = np.min(dists)
     return max(dist_picks, key=lambda x: dist_picks[x])
 
+def least_confidence(labeled, unlabeled, info):
+    """
+    Active learning acquisition function using a vectorized Naive Bayes–style model.
+    
+    This function builds a model from the labeled data (ignoring the target) that handles both
+    numeric and categorical features. It uses the header in info['head'] to determine the type:
+    
+      - Numeric: if the column name starts with an uppercase letter.
+      - Categorical: otherwise.
+    
+    For numeric features, it estimates a Gaussian (computing mean and variance) and computes 
+    log probability densities in a vectorized manner. For categorical features, it computes 
+    frequency counts (with Laplace smoothing) and then the log probabilities using a vectorized
+    function.
+    
+    The unlabeled row with the smallest total log-likelihood (least likely under the model)
+    is returned.
+    
+    Parameters:
+        labeled (list): List of labeled data points, each as a tuple (features, target).
+                        'features' is a list of values.
+        unlabeled (list): List of unlabeled data points (each is a list of feature values).
+        info (dict): Dictionary that must contain 'head' (a list of column names).
+                     The computed Naive Bayes model is stored under key "naive_bayes".
+        distance_function (function): Custom distance function (unused here).
+    
+    Returns:
+        int: Index of the unlabeled data point with the lowest total log-likelihood.
+    """
+    # Use the provided header to create a mask: numeric if first char is uppercase.
+    numeric_mask = np.array([col[0].isupper() for col in info['head']])
+    cat_mask = ~numeric_mask
+
+    # Build the model from labeled data if not already present.
+    if "naive_bayes" not in info:
+        if not labeled:
+            raise ValueError("No labeled data provided.")
+        # Extract features from labeled data (ignoring target).
+        labeled_features = np.array([features[:-1] for features in labeled])
+        
+        # --- Numeric part ---
+        if np.any(numeric_mask):
+            # Convert numeric columns to float.
+            numeric_data = labeled_features[:, numeric_mask].astype(float)
+            means = np.mean(numeric_data, axis=0)
+            # Use sample variance (ddof=1) if possible.
+            variances = np.var(numeric_data, axis=0, ddof=1) if numeric_data.shape[0] > 1 \
+                        else np.full(means.shape, 1e-6)
+            # Avoid zeros.
+            variances[variances <= 0] = 1e-6
+        else:
+            means = np.array([])
+            variances = np.array([])
+        
+        # --- Categorical part ---
+        cat_models = []
+        if np.any(cat_mask):
+            cat_data = labeled_features[:, cat_mask]
+            # For each categorical column, compute unique counts.
+            for j in range(cat_data.shape[1]):
+                col_vals = cat_data[:, j]
+                unique, counts = np.unique(col_vals, return_counts=True)
+                counts_dict = dict(zip(unique, counts))
+                total = np.sum(counts)
+                unique_count = len(unique)
+                m = 1  # smoothing parameter
+                cat_models.append({
+                    "counts": counts_dict,
+                    "total": total,
+                    "unique": unique_count,
+                    "m": m
+                })
+        # Store model in info.
+        info["naive_bayes"] = {
+            "numeric": {"means": means, "variances": variances, "mask": numeric_mask},
+            "categorical": {"models": cat_models, "mask": cat_mask}
+        }
+    
+    # Retrieve the model.
+    model = info["naive_bayes"]
+    means = model["numeric"]["means"]
+    variances = model["numeric"]["variances"]
+    num_mask = model["numeric"]["mask"]
+    cat_models = model["categorical"]["models"]
+    cat_mask = model["categorical"]["mask"]
+    
+    # Convert unlabeled data to a NumPy array.
+    unlabeled_features = np.array([ul[:-1] for ul in unlabeled])
+    n_unlabeled = unlabeled_features.shape[0]
+    
+    # Initialize total log-likelihood for each unlabeled row.
+    total_loglik = np.zeros(n_unlabeled)
+    
+    # --- Numeric likelihoods (vectorized) ---
+    if np.any(num_mask):
+        unlabeled_numeric = unlabeled_features[:, num_mask].astype(float)  # shape: (n_unlabeled, n_numeric)
+        # Compute log pdf: log_pdf = -((x - mean)^2)/(2*var) - 0.5*log(2*pi*var)
+        diff = unlabeled_numeric - means  # broadcast subtraction, shape: (n_unlabeled, n_numeric)
+        log_pdf = - (diff ** 2) / (2 * variances) - 0.5 * np.log(2 * math.pi * variances)
+        numeric_loglik = np.sum(log_pdf, axis=1)  # sum over numeric columns
+        total_loglik += numeric_loglik
+
+    # --- Categorical likelihoods (vectorized over each column) ---
+    if np.any(cat_mask):
+        unlabeled_cat = unlabeled_features[:, cat_mask]
+        cat_loglik = np.zeros(n_unlabeled)
+        # Process each categorical column separately.
+        for j, col_model in enumerate(cat_models):
+            # Get the j-th categorical column from unlabeled data.
+            col_values = unlabeled_cat[:, j]
+            counts = col_model["counts"]
+            total = col_model["total"]
+            unique = col_model["unique"]
+            m = col_model["m"]
+            # Define a vectorized function to compute probability with Laplace smoothing.
+            def prob_fn(x):
+                prob = (counts.get(x, 0) + m * (1.0 / unique)) / (total + m)
+                return prob if prob > 0 else 1e-10
+            prob_vec = np.vectorize(prob_fn)(col_values)
+            # Add log probabilities.
+            cat_loglik += np.log(prob_vec)
+        total_loglik += cat_loglik
+
+    # Select the unlabeled row with the lowest total log-likelihood.
+    best_idx = int(np.argmin(total_loglik))
+    return best_idx
+
+## Kmeans++ initialization 
+def kmeansplusplus(unlabeled, k, info, dist_function):
+    data = np.array(unlabeled)  
+    first_index = np.random.choice(len(data))
+    centers = [data[first_index]]
+    idx = [first_index]
+
+    for _ in range(k - 1):
+        centers_arr = np.array(centers)
+        dists = [dist_function(data, center, info, weight=True) for center in centers_arr]
+        dists = np.array(dists)
+        min_dists = np.min(dists, axis=0)
+        probs = min_dists ** 2
+        total = np.sum(probs)
+        if total == 0:
+            probabilities = np.full(len(data), 1/len(data))
+        else:
+            probabilities = probs / total
+        next_index = np.random.choice(len(data), p=probabilities)
+        centers.append(data[next_index])
+        idx.append(next_index)
+    return sorted(idx, reverse=True)
 
 ## Find K-Nearest Neighbors
 def knn_old(labeled, row, k, info, d_func, weight = False):
@@ -267,7 +417,7 @@ def experiment(dataset, settings, rpt=5):
     #                11(info. gain with uniform discr.), 12(info. gain with quantile discr.), 13(info. gain with kmeans discr.)
     #                20(ReliefF)
     # Values for CS: 0(No case selection), 1(Random Sampling), 2(diversity sampling)
-    # Values for AS: 0(No analogy/using all samples), 1(random analogies), 2(KNN)
+    # Values for AS: 0(No analogy/using all samples), 1(random analogies), 2(KNN), 3(kmeans), 4(least confidence)
     # Values for Dist: 0(Manhattan Distance), 1(Euclidean Distance)
     results = []
     targets = [c for c in df.columns if c[-1] in ["-","+"]]
@@ -327,14 +477,21 @@ def experiment(dataset, settings, rpt=5):
             info['max'] = list(train[final_features].max())
             info['scores'] = final_scores
             random.shuffle(unlabeled)
-            labeled = [unlabeled.pop() for _ in range(4)] ## Warm Start with 4 Random points
-            budget = math.sqrt(len(unlabeled))      ## Number of total labeled points
+            budget = int(math.sqrt(len(unlabeled)))     ## Number of total labeled points
+            labeled = []
+            if settings["CS"] in ["2", "4"]: 
+                labeled = [unlabeled.pop(idx) for idx in kmeansplusplus(unlabeled, 5, info, distance_function)] ## Warm Start with kmeans++ initialization
             if settings["CS"] == "0":   labeled = unlabeled                                                             ## No Sampling
+            elif settings["CS"] == "3":
+                labeled = [unlabeled.pop(idx) for idx in kmeansplusplus(unlabeled, budget, info, distance_function)]         ## Kmeans
             else:
                 while (len(labeled) < budget):
                     if settings["CS"] == "1":   labeled += [unlabeled.pop(random.randint(0, len(unlabeled)-1))]             ## Random Sampling
-                    if settings["CS"] == "2":   
+                    if settings["CS"] == "2":
                         labeled += [unlabeled.pop(diversity_sampling(labeled, unlabeled, info, distance_function))]   ## Diversity Sampling
+                    if settings["CS"] == "4":
+                        labeled += [unlabeled.pop(least_confidence(labeled, unlabeled, info))]
+
         ###########
         ## Stage 3 : Select Analogy
         ###########
@@ -348,7 +505,6 @@ def experiment(dataset, settings, rpt=5):
         ## Stage 4 : Make Prediction
         ###########
                 preds.append( weighted_avg(pred_rows, tst_list, info, distance_function) )     ## Predicting using weighted average of cluster
-
         ###########
         ## Stage 5 : Evaluation
         ###########
@@ -402,26 +558,45 @@ def optimization(space):
     return experiment(sys.argv[1], settings, 1)
 
 ## Searching for a setting that optimizes our method
-def find_best_setting():
-    space = {
-        'feature_selection': hp.choice('FS', ["00", "11", "12", "13", "20"]),
-        'case_selection': hp.choice('CS', ['0', '1', '2']),
-        'analogy_selection': hp.choice('AS', ['0', '1', '2']),
-        'distance_function': hp.choice('Dist', ['0', '1'])
-    }
-    best = fmin(
-        fn=optimization,
-        space=space,
-        algo=tpe.suggest,         # Tree-structured Parzen Estimator (TPE)
-        max_evals=50,
-        trials=Trials(),
-        show_progressbar=False
-    )
+def find_best_setting(method):
+    if method == "HOPT":
+        space = {
+            'feature_selection': hp.choice('FS', ["00", "11", "12", "13", "20"]),
+            'case_selection': hp.choice('CS', ['1','2','3', '4']),
+            'analogy_selection': hp.choice('AS', ['0', '1', '2']),
+            'distance_function': hp.choice('Dist', ['0', '1'])
+        }
+        best = fmin(
+            fn=optimization,
+            space=space,
+            algo=tpe.suggest,         # Tree-structured Parzen Estimator (TPE)
+            max_evals=50,
+            trials=Trials(),
+            show_progressbar=False
+        )
 
-    return {"FS":  ["00", "11", "12", "13", "20"][best['FS']], 
-                    "CS":   ['0', '1', '2'][best['CS']], 
-                    "AS":   ['0', '1', '2'][best['AS']], 
-                    "Dist": ['0', '1'][best['Dist']]}
+        return {"FS":  ["00", "11", "12", "13", "20"][best['FS']], 
+                "CS":   ['1','2','3','4'][best['CS']], 
+                "AS":   ['0', '1', '2'][best['AS']], 
+                "Dist": ['0', '1'][best['Dist']]}
+    elif method == "random":
+        settings = []
+        scores = []
+        cnt = 0
+        while cnt < 50:
+            new_setting = {
+                'feature_selection': random.choice(["00", "11", "12", "13", "20"]),
+                'case_selection': random.choice(['1','2','3', '4']),
+                'analogy_selection': random.choice(['0', '1', '2']),
+                'distance_function': random.choice(['0', '1'])
+            }
+            if new_setting not in settings:
+                settings.append(new_setting)
+                scores.append(optimization(new_setting))
+                cnt += 1
+        return dict(zip(["FS","CS","AS","Dist"], list(settings[scores.index(min(scores))].values())))
+            
+        
 
 ## Translate and keeps the HPOed setting
 def save_best_setting(setting):
@@ -439,21 +614,21 @@ if __name__ == '__main__':
     # Values for FS: 00(No feature selection), 
     #                11(info. gain with uniform discr.), 12(info. gain with quantile discr.), 13(info. gain with kmeans discr.)
     #                20(ReliefF)
-    # Values for CS: 0(No case selection), 1(Random Sampling), 2(diversity sampling)
+    # Values for CS: 0(No case selection), 1(Random Sampling), 2(diversity sampling), 3(Kmeans), 4(least confidence)
     # Values for AS: 0(No analogy/using all samples), 1(random analogies), 2(KNN)
     # Values for Dist: 0(Manhattan Distance), 1(Euclidean Distance)
 
 
-    #ss = {"FS":  "20", 
-    #      "CS":   "2", 
-    #      "AS":   "2", 
+    #ss = {"FS":  "00", 
+    #      "CS":   "4", 
+    #      "AS":   "1", 
     #      "Dist": "1"}
     #t1 = time.time()
     #experiment(sys.argv[1], ss, 5)
     #input(f"done in {round(time.time()-t1,3)} seconds")
 
 
-    best_settings = find_best_setting()
+    best_settings = find_best_setting("HOPT")   ## can be chosen between Hyper Opt method(TPE) and Random Search
     baseline_setting = {"FS":  "00", 
                     "CS":   "0", 
                     "AS":   "1", 
