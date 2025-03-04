@@ -198,12 +198,6 @@ def least_confidence(labeled, unlabeled, info):
     """
     Active learning acquisition function using a vectorized Naive Bayes–style model.
     
-    This function builds a model from the labeled data (ignoring the target) that handles both
-    numeric and categorical features. It uses the header in info['head'] to determine the type:
-    
-      - Numeric: if the column name starts with an uppercase letter.
-      - Categorical: otherwise.
-    
     For numeric features, it estimates a Gaussian (computing mean and variance) and computes 
     log probability densities in a vectorized manner. For categorical features, it computes 
     frequency counts (with Laplace smoothing) and then the log probabilities using a vectorized
@@ -212,75 +206,45 @@ def least_confidence(labeled, unlabeled, info):
     The unlabeled row with the smallest total log-likelihood (least likely under the model)
     is returned.
     
-    Parameters:
-        labeled (list): List of labeled data points, each as a tuple (features, target).
-                        'features' is a list of values.
-        unlabeled (list): List of unlabeled data points (each is a list of feature values).
-        info (dict): Dictionary that must contain 'head' (a list of column names).
-                     The computed Naive Bayes model is stored under key "naive_bayes".
-        distance_function (function): Custom distance function (unused here).
-    
-    Returns:
-        int: Index of the unlabeled data point with the lowest total log-likelihood.
     """
-    # Use the provided header to create a mask: numeric if first char is uppercase.
     numeric_mask = np.array([col[0].isupper() for col in info['head']])
     cat_mask = ~numeric_mask
 
-    # Build the model from labeled data if not already present.
-    if "naive_bayes" not in info:
-        if not labeled:
-            raise ValueError("No labeled data provided.")
-        # Extract features from labeled data (ignoring target).
-        labeled_features = np.array([features[:-1] for features in labeled])
-        
-        # --- Numeric part ---
-        if np.any(numeric_mask):
-            # Convert numeric columns to float.
-            numeric_data = labeled_features[:, numeric_mask].astype(float)
-            means = np.mean(numeric_data, axis=0)
-            # Use sample variance (ddof=1) if possible.
-            variances = np.var(numeric_data, axis=0, ddof=1) if numeric_data.shape[0] > 1 \
-                        else np.full(means.shape, 1e-6)
-            # Avoid zeros.
-            variances[variances <= 0] = 1e-6
-        else:
-            means = np.array([])
-            variances = np.array([])
-        
-        # --- Categorical part ---
-        cat_models = []
-        if np.any(cat_mask):
-            cat_data = labeled_features[:, cat_mask]
-            # For each categorical column, compute unique counts.
-            for j in range(cat_data.shape[1]):
-                col_vals = cat_data[:, j]
-                unique, counts = np.unique(col_vals, return_counts=True)
-                counts_dict = dict(zip(unique, counts))
-                total = np.sum(counts)
-                unique_count = len(unique)
-                m = 1  # smoothing parameter
-                cat_models.append({
-                    "counts": counts_dict,
-                    "total": total,
-                    "unique": unique_count,
-                    "m": m
-                })
-        # Store model in info.
-        info["naive_bayes"] = {
-            "numeric": {"means": means, "variances": variances, "mask": numeric_mask},
-            "categorical": {"models": cat_models, "mask": cat_mask}
-        }
+    labeled_features = np.array([features[:-1] for features in labeled])
     
-    # Retrieve the model.
-    model = info["naive_bayes"]
-    means = model["numeric"]["means"]
-    variances = model["numeric"]["variances"]
-    num_mask = model["numeric"]["mask"]
-    cat_models = model["categorical"]["models"]
-    cat_mask = model["categorical"]["mask"]
+    # --- Numeric part ---
+    if np.any(numeric_mask):
+        # Convert numeric columns to float.
+        numeric_data = labeled_features[:, numeric_mask].astype(float)
+        means = np.mean(numeric_data, axis=0)
+        # Use sample variance (ddof=1) if possible.
+        variances = np.var(numeric_data, axis=0, ddof=1) if numeric_data.shape[0] > 1 \
+                    else np.full(means.shape, 1e-6)
+        # Avoid zeros.
+        variances[variances <= 0] = 1e-6
+    else:
+        means = np.array([])
+        variances = np.array([])
     
-    # Convert unlabeled data to a NumPy array.
+    # --- Categorical part ---
+    cat_models = []
+    if np.any(cat_mask):
+        cat_data = labeled_features[:, cat_mask]
+        # For each categorical column, compute unique counts.
+        for j in range(cat_data.shape[1]):
+            col_vals = cat_data[:, j]
+            unique, counts = np.unique(col_vals, return_counts=True)
+            counts_dict = dict(zip(unique, counts))
+            total = np.sum(counts)
+            unique_count = len(unique)
+            m = 1  # smoothing parameter
+            cat_models.append({
+                "counts": counts_dict,
+                "total": total,
+                "unique": unique_count,
+                "m": m
+            })
+    
     unlabeled_features = np.array([ul[:-1] for ul in unlabeled])
     n_unlabeled = unlabeled_features.shape[0]
     
@@ -288,8 +252,8 @@ def least_confidence(labeled, unlabeled, info):
     total_loglik = np.zeros(n_unlabeled)
     
     # --- Numeric likelihoods (vectorized) ---
-    if np.any(num_mask):
-        unlabeled_numeric = unlabeled_features[:, num_mask].astype(float)  # shape: (n_unlabeled, n_numeric)
+    if np.any(numeric_mask):
+        unlabeled_numeric = unlabeled_features[:, numeric_mask].astype(float)  # shape: (n_unlabeled, n_numeric)
         # Compute log pdf: log_pdf = -((x - mean)^2)/(2*var) - 0.5*log(2*pi*var)
         diff = unlabeled_numeric - means  # broadcast subtraction, shape: (n_unlabeled, n_numeric)
         log_pdf = - (diff ** 2) / (2 * variances) - 0.5 * np.log(2 * math.pi * variances)
@@ -481,7 +445,7 @@ def experiment(dataset, settings, rpt=5):
             labeled = []
             if settings["CS"] in ["2", "4"]: 
                 labeled = [unlabeled.pop(idx) for idx in kmeansplusplus(unlabeled, 5, info, distance_function)] ## Warm Start with kmeans++ initialization
-            if settings["CS"] == "0":   labeled = unlabeled                                                             ## No Sampling
+            if settings["CS"] == "00":   labeled = unlabeled                                                             ## No Sampling
             elif settings["CS"] == "3":
                 labeled = [unlabeled.pop(idx) for idx in kmeansplusplus(unlabeled, budget, info, distance_function)]         ## Kmeans
             else:
@@ -595,12 +559,12 @@ def find_best_setting(method):
                 scores.append(optimization(new_setting))
                 cnt += 1
         return dict(zip(["FS","CS","AS","Dist"], list(settings[scores.index(min(scores))].values())))
-            
-        
+               
 
 ## Translate and keeps the HPOed setting
-def save_best_setting(setting):
-    print(setting)
+def save_best_setting(setting, data):
+    print(setting,data.split('/')[-2]+'/'+data.split('/')[-1])
+    setting['target'] = data.split('/')[-2]+'/'+data.split('/')[-1]
     with open('best_settings.csv', 'a') as file:
         f = DictWriter(file, fieldnames=setting.keys())
         f.writerow(setting)
@@ -614,7 +578,7 @@ if __name__ == '__main__':
     # Values for FS: 00(No feature selection), 
     #                11(info. gain with uniform discr.), 12(info. gain with quantile discr.), 13(info. gain with kmeans discr.)
     #                20(ReliefF)
-    # Values for CS: 0(No case selection), 1(Random Sampling), 2(diversity sampling), 3(Kmeans), 4(least confidence)
+    # Values for CS: 00(No case selection), 1(Random Sampling), 2(diversity sampling), 3(Kmeans), 4(least confidence)
     # Values for AS: 0(No analogy/using all samples), 1(random analogies), 2(KNN)
     # Values for Dist: 0(Manhattan Distance), 1(Euclidean Distance)
 
@@ -627,15 +591,14 @@ if __name__ == '__main__':
     #experiment(sys.argv[1], ss, 5)
     #input(f"done in {round(time.time()-t1,3)} seconds")
 
-
+    dataset = sys.argv[1]
     best_settings = find_best_setting("HOPT")   ## can be chosen between Hyper Opt method(TPE) and Random Search
     baseline_setting = {"FS":  "00", 
-                    "CS":   "0", 
+                    "CS":   "00", 
                     "AS":   "1", 
                     "Dist": "0"}
-    save_best_setting(best_settings)
-    
-    r0, r1, r2, r3 = experiment(sys.argv[1], baseline_setting, 5), experiment(sys.argv[1], best_settings, 5), run_baseline(sys.argv[1], "linear"), run_baseline(sys.argv[1], "lgbm")
+    save_best_setting(best_settings, dataset)
+    r0, r1, r2, r3 = experiment(dataset, baseline_setting, 5), experiment(dataset, best_settings, 5), run_baseline(dataset, "linear"), run_baseline(dataset, "lgbm")
 
     idx = 0
     for i,j,k,w in zip(r0, r1,r2,r3):
