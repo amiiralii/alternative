@@ -196,7 +196,11 @@ def diversity_sampling(labeled, unlabeled, info, d_func):
     return max(dist_picks, key=lambda x: dist_picks[x])
 
 ## Based on NB probability rules
-def least_confidence(labeled, unlabeled, info):
+def least_confidence(labeled, unlabeled, info, budget):
+    # Define a vectorized function to compute probability with Laplace smoothing.
+    def prob_fn(x):
+        prob = (counts.get(x, 0) + m * (1.0 / unique)) / (total + m)
+        return prob if prob > 0 else 1e-10
     """
     Active learning acquisition function using a vectorized Naive Bayes–style model.
     
@@ -274,17 +278,15 @@ def least_confidence(labeled, unlabeled, info):
             total = col_model["total"]
             unique = col_model["unique"]
             m = col_model["m"]
-            # Define a vectorized function to compute probability with Laplace smoothing.
-            def prob_fn(x):
-                prob = (counts.get(x, 0) + m * (1.0 / unique)) / (total + m)
-                return prob if prob > 0 else 1e-10
             prob_vec = np.vectorize(prob_fn)(col_values)
             # Add log probabilities.
             cat_loglik += np.log(prob_vec)
         total_loglik += cat_loglik
-
-    # Select the unlabeled row with the lowest total log-likelihood.
-    best_idx = int(np.argmin(total_loglik))
+    
+    ## Balancing between exploration and exploitation
+    lambda_param = len(labeled) // budget  
+    target = lambda_param * np.max(total_loglik) + (1 - lambda_param) * np.min(total_loglik)
+    best_idx = int(np.argmin(np.abs(total_loglik - target)))
     return best_idx
 
 ## Kmeans++ initialization 
@@ -361,8 +363,8 @@ def weighted_avg(cluster, target_row, info, d_func):
     cluster_targets = cluster_arr[:, -1]
     return np.sum(weights * cluster_targets) / np.sum(weights)
 
-## MAPE metric for accuracy
-def mape(true, pred):
+## Smape metric for accuracy
+def smape(true, pred):
     return np.mean(np.abs((true - pred) / ((abs(true)+abs(pred))/2 + 1e-32) )) * 100
 
 ## Cross Validation since our methods are not deterministic
@@ -453,7 +455,7 @@ def experiment(dataset, settings, rpt=5):
                     if settings["CS"] == "2":
                         labeled += [unlabeled.pop(diversity_sampling(labeled, unlabeled, info, distance_function))]   ## Diversity Sampling
                     if settings["CS"] == "4":
-                        labeled += [unlabeled.pop(least_confidence(labeled, unlabeled, info))]
+                        labeled += [unlabeled.pop(least_confidence(labeled, unlabeled, info, budget))]                  ## Least confidence based on NB
 
         ###########
         ## Stage 3 : Select Analogy
@@ -471,7 +473,7 @@ def experiment(dataset, settings, rpt=5):
         ###########
         ## Stage 5 : Evaluation
         ###########
-            target_results.append(mape(test[t].to_numpy(),np.array(preds)))
+            target_results.append(smape(test[t].to_numpy(),np.array(preds)))
 
         results.append(target_results)
 
@@ -487,7 +489,7 @@ def experiment(dataset, settings, rpt=5):
     ##          For tst in test:
     ##              analogy
     ##              prediction
-    ##          mape evals
+    ##          smape evals
     ## stats report
 
 ## doing same task with SOTA / common methods 
@@ -507,8 +509,8 @@ def run_baseline(dataset, model):
     for train,test in cross_val(df):
         r=[]
         for t in targets:
-            if model == "linear":   r.append(mape(test[t].to_numpy(), regressors.linear(train[features],train[t],test[features])))
-            if model == "lgbm": r.append(mape(test[t].to_numpy(), regressors.lightgbm(train[features],train[t],test[features])))
+            if model == "linear":   r.append(smape(test[t].to_numpy(), regressors.linear(train[features],train[t],test[features])))
+            if model == "lgbm": r.append(smape(test[t].to_numpy(), regressors.lightgbm(train[features],train[t],test[features])))
         res.append(r)
     return np.array(res).T
 
@@ -587,7 +589,7 @@ if __name__ == '__main__':
     #      "AS":   "1", 
     #      "Dist": "1"}
     #t1 = time.time()
-    #experiment(sys.argv[1], ss, 5)
+    #print( experiment(sys.argv[1], ss, 5) )
     #input(f"done in {round(time.time()-t1,3)} seconds")
 
     dataset = sys.argv[1]
