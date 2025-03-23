@@ -47,3 +47,9 @@ FS,CS,AS,Dst,dataset
 12,1,2,0,config/SS-N.csv
 11,2,2,1,config/SS-W.csv
 11,2,0,1,config/SS-X.csv
+00,1,0,0,misc/auto93.csv
+00,3,2,0,misc/auto93.csv
+00,1,0,1,misc/auto93_Acc+.csv
+20,3,0,1,misc/auto93_Lbs-.csv
+13,2,2,1,misc/auto93_Mpg+.csv
+12,2,2,0,config/Apache_AllMeasurements_Performance-.csv

@@ -9,12 +9,15 @@ from sklearn.preprocessing import StandardScaler
 from ITMO_FS.filters.univariate import reliefF_measure
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import KFold
+from sklearn.metrics.pairwise import rbf_kernel
+from sklearn.manifold import SpectralEmbedding
 from sklearn.utils import shuffle
 import regressors
 import random
 from hyperopt import hp, fmin, tpe, Trials
 import stats
 import time
+import csv
 from csv import DictWriter
 
 # Gets x, max and min of the col and returns the normalized value
@@ -376,17 +379,20 @@ def cross_val(dataset, repeat=5, folds=5):
             yield dataset.iloc[train_index].reset_index(drop=True), dataset.iloc[test_index].reset_index(drop=True)        
 
 ## Actual task happens here
-def experiment(dataset, settings, rpt=5):
-    df = pd.read_csv(dataset)
-    df = df.drop(columns=[c for c in df.columns if c[-1] in ["X"]])
-    df.drop_duplicates(inplace=True)
-    le = LabelEncoder()
-    for c in df.columns:
-                if not c[0].isupper(): df[c] = le.fit_transform(df[c])
+def experiment(dataset, settings, rpt=5, df=None):
+    if df is None:
+        df = pd.read_csv(dataset)
+        df = df.drop(columns=[c for c in df.columns if c[-1] in ["X"]])
+        df.drop_duplicates(inplace=True)
+        le = LabelEncoder()
+        for c in df.columns:
+                    if not c[0].isupper(): df[c] = le.fit_transform(df[c])
+
     ## Set the experiment settings
     # Values for FS: 00(No feature selection), 
     #                11(info. gain with uniform discr.), 12(info. gain with quantile discr.), 13(info. gain with kmeans discr.)
     #                20(ReliefF)
+    #                30(Manifold Regularization)
     # Values for CS: 0(No case selection), 1(Random Sampling), 2(diversity sampling)
     # Values for AS: 0(No analogy/using all samples), 1(random analogies), 2(KNN), 3(kmeans), 4(least confidence)
     # Values for Dist: 0(Manhattan Distance), 1(Euclidean Distance)
@@ -423,6 +429,16 @@ def experiment(dataset, settings, rpt=5):
             if settings["FS"][0] == "2":  
                 sampled_indices = x_train.sample(n=int(len(x_train)**0.5)).index
                 feature_score = reliefF_measure(x_train.iloc[sampled_indices].values, y.iloc[sampled_indices].values) ## ReliefF
+            if settings["FS"][0] == "3":  
+                with open('intrinsic_dimension.csv', 'r', newline='') as csvfile:
+                    for row in csv.DictReader(csvfile):
+                        if row["Dataset_Name"] in dataset.split("/")[-1][:-4]:
+                            dim = int(row["intrinsic_dimension"])
+                affinity_matrix = rbf_kernel(x_train, gamma=0.5)
+                embed = SpectralEmbedding(n_components=dim, affinity='rbf', gamma=0.1)
+                manifold_features = pd.DataFrame(embed.fit_transform(affinity_matrix))
+                manifold_features.columns = ["C"+str(t) for t in manifold_features.columns]
+                feature_score = [1 for _ in manifold_features]
 
             for i in range(len(feature_score)): 
                 if (feature_score[i] < 0 or math.isnan(feature_score[i]) ): feature_score[i] = 0 
@@ -497,7 +513,6 @@ def run_baseline(dataset, model):
     df = pd.read_csv(dataset)
     df = df.drop(columns=[c for c in df.columns if c[-1] in ["X"]])
     df.drop_duplicates(inplace=True)
-
     targets = [c for c in df.columns if c[-1] in ["-","+"]]
     features = [c for c in df.columns if c[-1] not in ["-","+"]]
     le = LabelEncoder()
@@ -526,7 +541,7 @@ def optimization(space):
 def find_best_setting(method):
     if method == "HOPT":
         space = {
-            'feature_selection': hp.choice('FS', ["00", "11", "12", "13", "20"]),
+            'feature_selection': hp.choice('FS', ["00", "11", "12", "13", "20", "30"]),
             'case_selection': hp.choice('CS', ['1','2','3', '4']),
             'analogy_selection': hp.choice('AS', ['0', '1', '2']),
             'distance_function': hp.choice('Dist', ['0', '1'])
@@ -540,7 +555,7 @@ def find_best_setting(method):
             show_progressbar=False
         )
 
-        return {"FS":  ["00", "11", "12", "13", "20"][best['FS']], 
+        return {"FS":  ["00", "11", "12", "13", "20", "30"][best['FS']], 
                 "CS":   ['1','2','3','4'][best['CS']], 
                 "AS":   ['0', '1', '2'][best['AS']], 
                 "Dist": ['0', '1'][best['Dist']]}
@@ -550,7 +565,7 @@ def find_best_setting(method):
         cnt = 0
         while cnt < 50:
             new_setting = {
-                'feature_selection': random.choice(["00", "11", "12", "13", "20"]),
+                'feature_selection': random.choice(["00", "11", "12", "13", "20", "30"]),
                 'case_selection': random.choice(['1','2','3', '4']),
                 'analogy_selection': random.choice(['0', '1', '2']),
                 'distance_function': random.choice(['0', '1'])
@@ -579,26 +594,29 @@ if __name__ == '__main__':
     # Values for FS: 00(No feature selection), 
     #                11(info. gain with uniform discr.), 12(info. gain with quantile discr.), 13(info. gain with kmeans discr.)
     #                20(ReliefF)
+    #                30(Manifold Regularization)
     # Values for CS: 00(No case selection), 1(Random Sampling), 2(diversity sampling), 3(Kmeans), 4(least confidence)
     # Values for AS: 0(No analogy/using all samples), 1(random analogies), 2(KNN)
     # Values for Dist: 0(Manhattan Distance), 1(Euclidean Distance)
 
 
-    #ss = {"FS":  "00", 
-    #      "CS":   "4", 
-    #      "AS":   "1", 
-    #      "Dist": "1"}
+    best_settings = {"FS":  "12", 
+          "CS":   "2", 
+          "AS":   "2", 
+          "Dist": "1"}
     #t1 = time.time()
     #print( experiment(sys.argv[1], ss, 5) )
     #input(f"done in {round(time.time()-t1,3)} seconds")
-
-    dataset = sys.argv[1]
-    best_settings = find_best_setting("HOPT")   ## can be chosen between Hyper Opt method(TPE) and Random Search
+    
+    dataset = sys.argv[1]    
+    #best_settings = find_best_setting("HOPT")   ## can be chosen between Hyper Opt method(TPE) and Random Search
     baseline_setting = {"FS":  "00", 
                     "CS":   "00", 
                     "AS":   "1", 
                     "Dist": "0"}
-    save_best_setting(best_settings, dataset)
+    #print("Optimization Done!")
+    #print(best_settings)
+    #save_best_setting(best_settings, dataset)
     r0, r1, r2, r3 = experiment(dataset, baseline_setting, 5), experiment(dataset, best_settings, 5), run_baseline(dataset, "linear"), run_baseline(dataset, "lgbm")
 
     idx = 0
@@ -608,14 +626,7 @@ if __name__ == '__main__':
         s1.adds(j)
         s2.adds(k)
         s3.adds(w)
-        print(f"Target {idx}")
+        #print(f"Target {idx}")
         idx += 1
         stats.report([s0, s1, s2, s3])
     
-    #experiment(sys.argv[1], settings)
-    #run_baseline(sys.argv[1])
-
-    #for target in [c for c in df.columns if c[-1] in ["+","-"]]:
-    #    print(f"\n{target}:")
-    #    stats.report( [vals for st,vals in statistics.items() if target in st] )
-
