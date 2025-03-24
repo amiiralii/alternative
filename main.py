@@ -627,7 +627,7 @@ if __name__ == '__main__':
                     "Dist": "0"}
     #print("Optimization Done!")
     #print(best_settings)
-    #save_best_setting(best_settings, dataset)
+    save_best_setting(best_settings, dataset)
     r0, r1, r2, r3 = experiment(dataset, baseline_setting, 5), experiment(dataset, best_settings, 5), run_baseline(dataset, "linear"), run_baseline(dataset, "lgbm")
 
     idx = 0
