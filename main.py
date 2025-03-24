@@ -8,9 +8,11 @@ from sklearn.feature_selection import mutual_info_regression
 from sklearn.preprocessing import StandardScaler
 from ITMO_FS.filters.univariate import reliefF_measure
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.decomposition import PCA
 from sklearn.model_selection import KFold
 from sklearn.metrics.pairwise import rbf_kernel
 from sklearn.manifold import SpectralEmbedding
+from sklearn.preprocessing import StandardScaler
 from sklearn.utils import shuffle
 import regressors
 import random
@@ -385,14 +387,18 @@ def experiment(dataset, settings, rpt=5, df=None):
         df = df.drop(columns=[c for c in df.columns if c[-1] in ["X"]])
         df.drop_duplicates(inplace=True)
         le = LabelEncoder()
+        scaler = StandardScaler()
         for c in df.columns:
-                    if not c[0].isupper(): df[c] = le.fit_transform(df[c])
+            if not c[0].isupper(): df[c] = le.fit_transform(df[c])
+        num_cols = [c for c in df.columns if (c[0].isupper() and c[-1] not in ["+","-"])]
+        if len(num_cols)>0: df[num_cols] = scaler.fit_transform(df[num_cols])
 
     ## Set the experiment settings
     # Values for FS: 00(No feature selection), 
     #                11(info. gain with uniform discr.), 12(info. gain with quantile discr.), 13(info. gain with kmeans discr.)
     #                20(ReliefF)
     #                30(Manifold Regularization)
+    #                40(PCA)
     # Values for CS: 0(No case selection), 1(Random Sampling), 2(diversity sampling)
     # Values for AS: 0(No analogy/using all samples), 1(random analogies), 2(KNN), 3(kmeans), 4(least confidence)
     # Values for Dist: 0(Manhattan Distance), 1(Euclidean Distance)
@@ -439,6 +445,11 @@ def experiment(dataset, settings, rpt=5, df=None):
                 manifold_features = pd.DataFrame(embed.fit_transform(affinity_matrix))
                 manifold_features.columns = ["C"+str(t) for t in manifold_features.columns]
                 feature_score = [1 for _ in manifold_features]
+            if settings["FS"][0] == "4":
+                pca = PCA(n_components=0.95)
+                X_pca = pca.fit_transform(x_train)
+                pca_features = pd.DataFrame(X_pca, columns=[f'PC{i+1}' for i in range(X_pca.shape[1])])
+                feature_score = [1 for _ in pca_features]
 
             for i in range(len(feature_score)): 
                 if (feature_score[i] < 0 or math.isnan(feature_score[i]) ): feature_score[i] = 0 
@@ -541,7 +552,7 @@ def optimization(space):
 def find_best_setting(method):
     if method == "HOPT":
         space = {
-            'feature_selection': hp.choice('FS', ["00", "11", "12", "13", "20", "30"]),
+            'feature_selection': hp.choice('FS', ["00", "11", "12", "13", "20", "30", "40"]),
             'case_selection': hp.choice('CS', ['1','2','3', '4']),
             'analogy_selection': hp.choice('AS', ['0', '1', '2']),
             'distance_function': hp.choice('Dist', ['0', '1'])
@@ -555,7 +566,7 @@ def find_best_setting(method):
             show_progressbar=False
         )
 
-        return {"FS":  ["00", "11", "12", "13", "20", "30"][best['FS']], 
+        return {"FS":  ["00", "11", "12", "13", "20", "30", "40"][best['FS']], 
                 "CS":   ['1','2','3','4'][best['CS']], 
                 "AS":   ['0', '1', '2'][best['AS']], 
                 "Dist": ['0', '1'][best['Dist']]}
@@ -565,7 +576,7 @@ def find_best_setting(method):
         cnt = 0
         while cnt < 50:
             new_setting = {
-                'feature_selection': random.choice(["00", "11", "12", "13", "20", "30"]),
+                'feature_selection': random.choice(["00", "11", "12", "13", "20", "30", "40"]),
                 'case_selection': random.choice(['1','2','3', '4']),
                 'analogy_selection': random.choice(['0', '1', '2']),
                 'distance_function': random.choice(['0', '1'])
@@ -600,16 +611,16 @@ if __name__ == '__main__':
     # Values for Dist: 0(Manhattan Distance), 1(Euclidean Distance)
 
 
-    best_settings = {"FS":  "12", 
-          "CS":   "2", 
-          "AS":   "2", 
-          "Dist": "1"}
+    #ss = {"FS":  "40", 
+    #      "CS":   "2", 
+    #      "AS":   "2", 
+    #      "Dist": "1"}
     #t1 = time.time()
     #print( experiment(sys.argv[1], ss, 5) )
     #input(f"done in {round(time.time()-t1,3)} seconds")
     
     dataset = sys.argv[1]    
-    #best_settings = find_best_setting("HOPT")   ## can be chosen between Hyper Opt method(TPE) and Random Search
+    best_settings = find_best_setting("HOPT")   ## can be chosen between Hyper Opt method(TPE) and Random Search
     baseline_setting = {"FS":  "00", 
                     "CS":   "00", 
                     "AS":   "1", 

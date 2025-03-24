@@ -5,6 +5,7 @@ import pandas as pd
 import main
 import stats
 from sklearn.manifold import SpectralEmbedding
+from sklearn.decomposition import PCA
 import numpy as np
 import time
 
